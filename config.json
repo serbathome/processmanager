@@ -1,0 +1,19 @@
+{
+    "processes": [
+        {
+            "name": "aefuf",
+            "command": "./aefuf",
+            "args": [],
+            "pauseMs": 1000,
+            "port": 2888
+        },
+        {
+            "name": "aefad",
+            "command": "./aefad",
+            "args": [],
+            "pauseMs": 0,
+            "port": 3888
+        }
+    ],
+    "logLevel": "info"
+}
