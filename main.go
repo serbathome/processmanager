@@ -3,13 +3,41 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 )
+
+type Logger struct {
+	Level string
+}
+
+func (logger *Logger) SetLevel(level string) {
+	logger.Level = level
+}
+
+func (logger *Logger) Debug(message string) {
+	if logger.Level == "DEBUG" {
+		log.Default().Println("|Debug|", message)
+	}
+}
+
+func (logger *Logger) Error(message string) {
+	if logger.Level == "INFO" || logger.Level == "ERROR" {
+		log.Default().Println("|Error|", message)
+	}
+}
+
+func (logger *Logger) Info(message string) {
+	if logger.Level == "DEBUG" || logger.Level == "ERROR" || logger.Level == "INFO" {
+		log.Default().Println("|Info|", message)
+	}
+}
 
 type Process struct {
 	Name      string
@@ -21,98 +49,125 @@ type Process struct {
 }
 
 type Config struct {
-	Processes []*Process
+	Processes []Process
 	LogLevel  string
 }
 
 var (
 	restartMutex sync.Mutex
 	config       Config
+	logger       Logger
 )
 
-func loadConfig() {
-	fmt.Println("Loading process manager config...")
+func (config *Config) loadConfig() {
+	log.Default().Println("Loading process manager config...")
 	file, err := os.Open("config.json")
 	if err != nil {
-		fmt.Println("Error opening config file:", err)
+		logger.Error("Error opening config file: " + err.Error())
 		return
 	}
 	defer file.Close()
 	decoder := json.NewDecoder(file)
 	err = decoder.Decode(&config)
 	if err != nil {
-		fmt.Println("Error decoding config file:", err)
+		logger.Error("Error decoding config file: " + err.Error())
 		return
 	}
-	fmt.Println("Config loaded successfully")
+	log.Default().Println("Config loaded successfully")
 }
 
-func dumpConfig() {
-	fmt.Println("Dumping config...")
+func (config *Config) dumpConfig() {
+	log.Default().Println("Dumping config...")
 	for _, process := range config.Processes {
-		fmt.Printf("Name: %s\n", process.Name)
-		fmt.Printf("Command: %s\n", process.Command)
-		fmt.Printf("Args: %v\n", process.Args)
-		fmt.Printf("PauseMs: %d\n", process.PauseMs)
-		fmt.Printf("Port: %d\n", process.Port)
+		log.Default().Printf("Name: %s\n", process.Name)
+		log.Default().Printf("Command: %s\n", process.Command)
+		log.Default().Printf("Args: %v\n", process.Args)
+		log.Default().Printf("PauseMs: %d\n", process.PauseMs)
+		log.Default().Printf("Port: %d\n", process.Port)
 	}
-	fmt.Printf("LogLevel: %s\n", config.LogLevel)
+	log.Default().Println("LogLevel:", config.LogLevel)
 }
 
-func stopProcesses(process *Process) {
-	fmt.Printf("Stopping %s...\n", process.Name)
+func (process *Process) PidExists() (bool, error) {
+	pid := int32(process.CmdObject.Process.Pid)
+	if pid <= 0 {
+		return false, fmt.Errorf("invalid pid %v", pid)
+	}
+	proc, err := os.FindProcess(int(pid))
+	if err != nil {
+		return false, err
+	}
+	err = proc.Signal(syscall.Signal(0))
+	if err == nil {
+		return true, nil
+	}
+	if err.Error() == "os: process already finished" {
+		return false, nil
+	}
+	errno, ok := err.(syscall.Errno)
+	if !ok {
+		return false, err
+	}
+	switch errno {
+	case syscall.ESRCH:
+		return false, nil
+	case syscall.EPERM:
+		return true, nil
+	}
+	return false, err
+}
+
+func (process *Process) stopProcess() {
+	log.Default().Printf("Stopping %s...\n", process.Name)
 	if process.CmdObject != nil {
 		process.CmdObject.Process.Kill()
-		fmt.Printf("%s stopped\n", process.Name)
+		process.CmdObject.Process.Wait()
+		log.Default().Printf("%s stopped\n", process.Name)
 	} else {
-		fmt.Printf("%s is not running\n", process.Name)
+		log.Default().Printf("%s is not running\n", process.Name)
 	}
 }
 
-func startProcesses(process *Process) {
-	fmt.Printf("Starting %s...\n", process.Name)
+func (process *Process) startProcess() {
+	log.Default().Printf("Starting %s...\n", process.Name)
 	process.CmdObject = exec.Command(process.Command, process.Args...)
 	if err := process.CmdObject.Start(); err != nil {
-		fmt.Printf("Failed to start %s: %v\n", process.Name, err)
+		log.Default().Printf("Failed to start %s: %v\n", process.Name, err)
 	} else {
-		fmt.Printf("%s started\n", process.Name)
+		log.Default().Printf("%s started with pid %d\n", process.Name, process.CmdObject.Process.Pid)
 		time.Sleep(time.Duration(process.PauseMs) * time.Millisecond)
 	}
 }
 
-func isProcessHealthy(process Process) bool {
-	fmt.Printf("Checking health of %s...\n", process.Name)
-	if process.CmdObject == nil {
-		fmt.Printf("%s has not been started or CmdObject is nil\n", process.Name)
-		return false
-	}
-	if process.CmdObject.ProcessState != nil &&
-		!process.CmdObject.ProcessState.Exited() {
-		fmt.Printf("%s is healthy\n", process.Name)
+func (process *Process) isProcessHealthy() bool {
+	log.Default().Printf("Checking health of %s...\n", process.Name)
+	if ok, err := process.PidExists(); ok && err == nil {
+		log.Default().Printf("%s is healthy\n", process.Name)
 		return true
+	} else if err != nil {
+		log.Default().Printf("Error checking health of %s: %v\n", process.Name, err)
+	} else {
+		log.Default().Printf("%s is not healthy\n", process.Name)
 	}
-	fmt.Printf("%s is not healthy\n", process.Name)
 	return false
 }
 
-func canConnectToProcess(process Process) bool {
-	fmt.Printf("Checking network health of %s...\n", process.Name)
+func (process *Process) canConnectToProcess() bool {
+	log.Default().Printf("Checking network health of %s...\n", process.Name)
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", process.Port), 2*time.Second)
 	if err != nil {
-		fmt.Printf("%s is not running\n", process.Name)
+		log.Default().Printf("Error connecting to %s: %v\n", process.Name, err)
 		return false
 	} else {
-		fmt.Printf("%s is running\n", process.Name)
+		log.Default().Printf("Connected to %s\n", process.Name)
 		conn.Close()
 		return true
 	}
 }
 
 func healthCheck() bool {
-	fmt.Println("Checking processes health...")
-	for _, process := range config.Processes {
-		if !isProcessHealthy(*process) || !canConnectToProcess(*process) {
-			fmt.Printf("Process %s is not healthy\n", process.Name)
+	for i := 0; i < len(config.Processes); i++ {
+		if !config.Processes[i].isProcessHealthy() || !config.Processes[i].canConnectToProcess() {
 			return false
 		}
 	}
@@ -121,11 +176,11 @@ func healthCheck() bool {
 
 func healthCheckLoop() {
 	for {
-		time.Sleep(5 * time.Second)
+		time.Sleep(60 * time.Second)
 		if healthCheck() {
-			fmt.Println("All processes are healthy")
+			log.Default().Println("All processes are healthy")
 		} else {
-			fmt.Println("One or more processes are not healthy")
+			log.Default().Println("One or more processes are not healthy")
 		}
 	}
 }
@@ -133,59 +188,61 @@ func healthCheckLoop() {
 // handlers
 // healthcheck handler
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("External health check request received")
+	log.Default().Println("External health check request received")
 	if healthCheck() {
-		fmt.Println("All processes are healthy")
 		w.WriteHeader(http.StatusOK)
 	} else {
-		fmt.Println("One or more processes are not healthy")
 		http.Error(w, "One or more processes are not healthy", http.StatusServiceUnavailable)
 	}
 }
 
 // restart handler
 func restartHandler(w http.ResponseWriter) {
-	fmt.Println("External restart request received")
+	log.Default().Println("External restart request received")
 	restartMutex.Lock()
 	defer restartMutex.Unlock()
 
 	if healthCheck() {
-		fmt.Println("All processes are healthy, no need to restart")
+		log.Default().Println("All processes are healthy, no need to restart")
 		w.WriteHeader(http.StatusOK)
 		return
 	} else {
-		fmt.Println("One or more processes are not healthy, restarting...")
-		for _, process := range config.Processes {
-			stopProcesses(process)
-			startProcesses(process)
+		log.Default().Println("One or more processes are not healthy. Restarting processes...")
+		for i := 0; i < len(config.Processes); i++ {
+			config.Processes[i].stopProcess()
+			config.Processes[i].startProcess()
 		}
-		fmt.Println("Processes restarted")
+		log.Default().Println("Processes restarted")
 		w.WriteHeader(http.StatusOK)
 	}
 }
 
 func main() {
-	fmt.Println("Starting process manager...")
+
+	logger := Logger{}
+	logger.SetLevel("DEBUG")
+
+	logger.Info("Starting process manager...")
 
 	// load config
-	loadConfig()
-	// dumpConfig()
+	config.loadConfig()
+	//config.dumpConfig()
 
 	// start processes
-	for _, process := range config.Processes {
-		startProcesses(process)
+	for i := 0; i < len(config.Processes); i++ {
+		config.Processes[i].startProcess()
 	}
 
 	// start health check process
-	fmt.Println("Staring health check process...")
-	//go healthCheckLoop()
+	logger.Debug("Starting health check loop...")
+	go healthCheckLoop()
 
 	// start HTTP server
 	http.HandleFunc("/health", healthCheckHandler)
 	http.HandleFunc("/restart", func(w http.ResponseWriter, r *http.Request) {
 		restartHandler(w)
 	})
-	fmt.Println("Starting HTTP server on port 8080...")
+	logger.Info("Starting HTTP server on port 8080...")
 	http.ListenAndServe(":8080", nil)
-	fmt.Println("HTTP server stopped")
+	logger.Info("HTTP server stopped")
 }
