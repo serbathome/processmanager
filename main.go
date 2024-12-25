@@ -15,27 +15,28 @@ import (
 
 type Logger struct {
 	Level string
+	mu    sync.Mutex
 }
 
 func (logger *Logger) SetLevel(level string) {
+	logger.mu.Lock()
 	logger.Level = level
+	logger.mu.Unlock()
 }
 
 func (logger *Logger) Debug(message string) {
 	if logger.Level == "DEBUG" {
-		log.Default().Println("|Debug|", message)
-	}
-}
-
-func (logger *Logger) Error(message string) {
-	if logger.Level == "INFO" || logger.Level == "ERROR" {
-		log.Default().Println("|Error|", message)
+		logger.mu.Lock()
+		log.Default().Println("[Debug]", message)
+		logger.mu.Unlock()
 	}
 }
 
 func (logger *Logger) Info(message string) {
-	if logger.Level == "DEBUG" || logger.Level == "ERROR" || logger.Level == "INFO" {
-		log.Default().Println("|Info|", message)
+	if logger.Level == "DEBUG" || logger.Level == "INFO" {
+		logger.mu.Lock()
+		log.Default().Println("[Info]", message)
+		logger.mu.Unlock()
 	}
 }
 
@@ -63,14 +64,14 @@ func (config *Config) loadConfig() {
 	logger.Debug("Loading process manager config...")
 	file, err := os.Open("config.json")
 	if err != nil {
-		logger.Error("Error opening config file: " + err.Error())
+		logger.Debug("Error opening config file: " + err.Error())
 		return
 	}
 	defer file.Close()
 	decoder := json.NewDecoder(file)
 	err = decoder.Decode(&config)
 	if err != nil {
-		logger.Error("Error decoding config file: " + err.Error())
+		logger.Debug("Error decoding config file: " + err.Error())
 		return
 	}
 	logger.Debug("Config loaded successfully")
@@ -87,40 +88,37 @@ func (config *Config) dumpConfig() {
 	}
 }
 
-func (process *Process) PidExists() (bool, error) {
-	pid := int32(process.CmdObject.Process.Pid)
-	if pid <= 0 {
-		return false, fmt.Errorf("invalid pid %v", pid)
-	}
-	proc, err := os.FindProcess(int(pid))
+func (p *Process) Wait() {
+	logger.Debug(fmt.Sprintf("[Watchdog] Start monitoring process: %s", p.Name))
+	err := p.CmdObject.Wait() // Wait for the process to finish
 	if err != nil {
-		return false, err
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+				logger.Debug(fmt.Sprintf("[Watchdog] Process exited with code: %d", status.ExitStatus()))
+				if status.Signaled() {
+					logger.Debug(fmt.Sprintf("[Watchdog] Process was terminated by signal: %s", status.Signal()))
+				}
+			}
+		} else {
+			logger.Debug(fmt.Sprintf("[Watchdog] Process exited with error: %v", err))
+		}
+	} else {
+		logger.Debug("[Watchdog] Process completed successfully")
 	}
-	err = proc.Signal(syscall.Signal(0))
-	if err == nil {
-		return true, nil
+}
+
+func (p *Process) watchProcess() {
+	for {
+		p.startProcess()
+		p.Wait()
+		logger.Info(fmt.Sprintf("[Watchdog] Process %s exited, restarting...", p.Name))
 	}
-	if err.Error() == "os: process already finished" {
-		return false, nil
-	}
-	errno, ok := err.(syscall.Errno)
-	if !ok {
-		return false, err
-	}
-	switch errno {
-	case syscall.ESRCH:
-		return false, nil
-	case syscall.EPERM:
-		return true, nil
-	}
-	return false, err
 }
 
 func (process *Process) stopProcess() {
 	logger.Debug(fmt.Sprintf("Stopping %s with pid %d", process.Name, process.CmdObject.Process.Pid))
 	if process.CmdObject != nil {
 		process.CmdObject.Process.Kill()
-		process.CmdObject.Process.Wait()
 		logger.Debug(fmt.Sprintf("%s stopped", process.Name))
 	} else {
 		logger.Debug(fmt.Sprintf("%s is not running", process.Name))
@@ -131,31 +129,18 @@ func (process *Process) startProcess() {
 	logger.Debug(fmt.Sprintf("Starting %s with command %s and args %v", process.Name, process.Command, process.Args))
 	process.CmdObject = exec.Command(process.Command, process.Args...)
 	if err := process.CmdObject.Start(); err != nil {
-		logger.Error(fmt.Sprintf("Failed to start %s: %v", process.Name, err))
+		logger.Debug(fmt.Sprintf("Failed to start %s: %v", process.Name, err))
 	} else {
 		time.Sleep(time.Duration(process.PauseMs) * time.Millisecond)
 		logger.Debug(fmt.Sprintf("%s started with pid %d", process.Name, process.CmdObject.Process.Pid))
 	}
 }
 
-func (process *Process) isProcessHealthy() bool {
-	logger.Debug(fmt.Sprintf("Checking health of %s...", process.Name))
-	if ok, err := process.PidExists(); ok && err == nil {
-		logger.Debug(fmt.Sprintf("%s is healthy", process.Name))
-		return true
-	} else if err != nil {
-		logger.Error(fmt.Sprintf("Error checking health of %s: %v", process.Name, err))
-	} else {
-		logger.Error(fmt.Sprintf("%s is not healthy", process.Name))
-	}
-	return false
-}
-
 func (process *Process) canConnectToProcess() bool {
 	logger.Debug(fmt.Sprintf("Checking network health of %s...", process.Name))
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", process.Port), 2*time.Second)
 	if err != nil {
-		logger.Error(fmt.Sprintf("Error connecting to %s: %v", process.Name, err))
+		logger.Debug(fmt.Sprintf("Error connecting to %s: %v", process.Name, err))
 		return false
 	} else {
 		logger.Debug(fmt.Sprintf("Connected to %s", process.Name))
@@ -166,7 +151,7 @@ func (process *Process) canConnectToProcess() bool {
 
 func healthCheck() bool {
 	for i := 0; i < len(config.Processes); i++ {
-		if !config.Processes[i].isProcessHealthy() || !config.Processes[i].canConnectToProcess() {
+		if !config.Processes[i].canConnectToProcess() {
 			return false
 		}
 	}
@@ -177,10 +162,24 @@ func healthCheckLoop() {
 	for {
 		time.Sleep(60 * time.Second)
 		if healthCheck() {
-			logger.Info("All processes are healthy")
+			logger.Info("Network connection to all processes is healthy")
 		} else {
-			logger.Error("One or more processes are not healthy")
+			logger.Info("One or more processes are not accessible over network, restarting processes...")
+			if !restartMutex.TryLock() {
+				logger.Info("Restart already in progress, skipping health check")
+				continue
+			} else {
+				restartProcesses()
+			}
+			restartMutex.Unlock()
 		}
+	}
+}
+
+func restartProcesses() {
+	for i := 0; i < len(config.Processes); i++ {
+		config.Processes[i].stopProcess()
+		config.Processes[i].startProcess()
 	}
 }
 
@@ -198,7 +197,12 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 // restart handler
 func restartHandler(w http.ResponseWriter) {
 	logger.Info("External restart request received")
-	restartMutex.Lock()
+
+	if !restartMutex.TryLock() {
+		logger.Info("Restart already in progress, ignoring request")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	defer restartMutex.Unlock()
 
 	if healthCheck() {
@@ -206,11 +210,8 @@ func restartHandler(w http.ResponseWriter) {
 		w.WriteHeader(http.StatusOK)
 		return
 	} else {
-		logger.Error("One or more processes are not healthy. Restarting processes...")
-		for i := 0; i < len(config.Processes); i++ {
-			config.Processes[i].stopProcess()
-			config.Processes[i].startProcess()
-		}
+		logger.Debug("One or more processes are not healthy. Restarting processes...")
+		restartProcesses()
 		logger.Info("Processes restarted")
 		w.WriteHeader(http.StatusOK)
 	}
@@ -227,8 +228,9 @@ func main() {
 	config.dumpConfig()
 
 	// start processes
-	for i := 0; i < len(config.Processes); i++ {
-		config.Processes[i].startProcess()
+	logger.Info("Starting processes...")
+	for i := range config.Processes {
+		go config.Processes[i].watchProcess()
 	}
 
 	// start health check process
