@@ -15,5 +15,5 @@
             "port": 3888
         }
     ],
-    "logLevel": "info"
+    "logLevel": "INFO"
 }

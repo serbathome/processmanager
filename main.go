@@ -57,7 +57,7 @@ type Config struct {
 var (
 	restartMutex sync.Mutex
 	config       Config
-	logger       Logger
+	logger       Logger = Logger{Level: "INFO"}
 )
 
 func (config *Config) loadConfig() {
@@ -74,6 +74,7 @@ func (config *Config) loadConfig() {
 		logger.Debug("Error decoding config file: " + err.Error())
 		return
 	}
+	logger.SetLevel(config.LogLevel)
 	logger.Debug("Config loaded successfully")
 }
 
@@ -86,6 +87,7 @@ func (config *Config) dumpConfig() {
 		logger.Debug("PauseMs: " + fmt.Sprintf("%d", process.PauseMs))
 		logger.Debug("Port: " + fmt.Sprintf("%d", process.Port))
 	}
+	logger.Debug("Log level: " + config.LogLevel)
 }
 
 func (p *Process) Wait() {
@@ -218,8 +220,6 @@ func restartHandler(w http.ResponseWriter) {
 }
 
 func main() {
-
-	logger.SetLevel("DEBUG")
 
 	logger.Info("Starting process manager...")
 
