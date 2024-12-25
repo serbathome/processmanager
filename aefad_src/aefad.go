@@ -1,17 +1,25 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log"
 	"net"
 	"time"
 )
 
 func main() {
-	listener, err := net.Listen("tcp", ":3888")
+	port := flag.Int("p", 3888, "Port to start the TCP server on")
+	flag.Parse()
+
+	address := fmt.Sprintf(":%d", *port)
+	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		log.Fatalf("Error starting TCP server: %v", err)
+		log.Fatalf("Error starting TCP server on port %d: %v", *port, err)
 	}
 	defer listener.Close()
+
+	log.Printf("Server started on port %d", *port)
 
 	for {
 		conn, err := listener.Accept()

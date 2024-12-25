@@ -57,7 +57,7 @@ type Config struct {
 var (
 	restartMutex sync.Mutex
 	config       Config
-	logger       Logger
+	logger       Logger = Logger{Level: "INFO"}
 )
 
 func (config *Config) loadConfig() {
@@ -74,6 +74,7 @@ func (config *Config) loadConfig() {
 		logger.Debug("Error decoding config file: " + err.Error())
 		return
 	}
+	logger.SetLevel(config.LogLevel)
 	logger.Debug("Config loaded successfully")
 }
 
@@ -86,6 +87,7 @@ func (config *Config) dumpConfig() {
 		logger.Debug("PauseMs: " + fmt.Sprintf("%d", process.PauseMs))
 		logger.Debug("Port: " + fmt.Sprintf("%d", process.Port))
 	}
+	logger.Debug("Log level: " + config.LogLevel)
 }
 
 func (p *Process) Wait() {
@@ -127,11 +129,11 @@ func (process *Process) stopProcess() {
 
 func (process *Process) startProcess() {
 	logger.Debug(fmt.Sprintf("Starting %s with command %s and args %v", process.Name, process.Command, process.Args))
+	time.Sleep(time.Duration(process.PauseMs) * time.Millisecond)
 	process.CmdObject = exec.Command(process.Command, process.Args...)
 	if err := process.CmdObject.Start(); err != nil {
 		logger.Debug(fmt.Sprintf("Failed to start %s: %v", process.Name, err))
 	} else {
-		time.Sleep(time.Duration(process.PauseMs) * time.Millisecond)
 		logger.Debug(fmt.Sprintf("%s started with pid %d", process.Name, process.CmdObject.Process.Pid))
 	}
 }
@@ -179,7 +181,7 @@ func healthCheckLoop() {
 func restartProcesses() {
 	for i := 0; i < len(config.Processes); i++ {
 		config.Processes[i].stopProcess()
-		config.Processes[i].startProcess()
+		// we don't need to start the process here, the watchProcess function will do it
 	}
 }
 
@@ -218,8 +220,6 @@ func restartHandler(w http.ResponseWriter) {
 }
 
 func main() {
-
-	logger.SetLevel("DEBUG")
 
 	logger.Info("Starting process manager...")
 
