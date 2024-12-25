@@ -24,6 +24,10 @@ func (logger *Logger) SetLevel(level string) {
 	logger.mu.Unlock()
 }
 
+func init() {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+}
+
 func (logger *Logger) Debug(message string) {
 	if logger.Level == "DEBUG" {
 		logger.mu.Lock()
