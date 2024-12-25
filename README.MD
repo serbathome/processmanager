@@ -1,6 +1,7 @@
-1. when starting read parameters
-2. start processes aefuf and aefad, they will listen on 127.0.0.1 to ports 2888 and 3888 accordinglyå
-3. regularly check if started processed are healty and listening to network ports
-4. if one or both processes are not running or not listening to ports, restart them
-5. create health check http endpoint, which if called will try to establish tcp connection to ports which aefuf and aefad are listening. If can't establlish connection, fail the probe. Otherwise return 200.
-6. create restart endpoint, which if called restarts aefuf and aefad processes. If restart is called, but processes are ok, don't restart.
+Process manager to run simple network services (initially broadcom transaction enabler)
+1. Reads config to learn which processes to start, which ports they need to listen to
+2. Aster starting services, it listens to syscalls to identify if service has terminated and restarts all the proccess in that case
+3. It also checks if sevices are able to respond to network connections, healthcheck loops is doing regular checks
+4. Manager is also listening to the following endpoints in port 8080:
+    - /health - it does the health check and return 200 or 503 in case healthcheck fails
+    - /restart - it does healthcheck and if healthcheck fails, it restarts all the processes
