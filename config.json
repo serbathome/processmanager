@@ -3,17 +3,17 @@
         {
             "name": "aefuf",
             "command": "./aefuf",
-            "args": [],
+            "args": ["-p", "2888"],
             "pauseMs": 1000,
             "port": 2888
         },
         {
             "name": "aefad",
             "command": "./aefad",
-            "args": [],
-            "pauseMs": 0,
+            "args": ["-p", "3888"],
+            "pauseMs": 1000,
             "port": 3888
         }
     ],
-    "logLevel": "INFO"
+    "logLevel": "DEBUG"
 }

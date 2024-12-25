@@ -129,11 +129,11 @@ func (process *Process) stopProcess() {
 
 func (process *Process) startProcess() {
 	logger.Debug(fmt.Sprintf("Starting %s with command %s and args %v", process.Name, process.Command, process.Args))
+	time.Sleep(time.Duration(process.PauseMs) * time.Millisecond)
 	process.CmdObject = exec.Command(process.Command, process.Args...)
 	if err := process.CmdObject.Start(); err != nil {
 		logger.Debug(fmt.Sprintf("Failed to start %s: %v", process.Name, err))
 	} else {
-		time.Sleep(time.Duration(process.PauseMs) * time.Millisecond)
 		logger.Debug(fmt.Sprintf("%s started with pid %d", process.Name, process.CmdObject.Process.Pid))
 	}
 }
@@ -181,7 +181,7 @@ func healthCheckLoop() {
 func restartProcesses() {
 	for i := 0; i < len(config.Processes); i++ {
 		config.Processes[i].stopProcess()
-		config.Processes[i].startProcess()
+		// we don't need to start the process here, the watchProcess function will do it
 	}
 }
 
