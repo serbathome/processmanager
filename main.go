@@ -24,6 +24,10 @@ func (logger *Logger) SetLevel(level string) {
 	logger.mu.Unlock()
 }
 
+func init() {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+}
+
 func (logger *Logger) Debug(message string) {
 	if logger.Level == "DEBUG" {
 		logger.mu.Lock()
@@ -96,16 +100,16 @@ func (p *Process) Wait() {
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-				logger.Debug(fmt.Sprintf("[Watchdog] Process exited with code: %d", status.ExitStatus()))
+				logger.Debug(fmt.Sprintf("[Watchdog] Process %s exited with code: %d", p.Name, status.ExitStatus()))
 				if status.Signaled() {
-					logger.Debug(fmt.Sprintf("[Watchdog] Process was terminated by signal: %s", status.Signal()))
+					logger.Debug(fmt.Sprintf("[Watchdog] Process %s was terminated by signal: %s", p.Name, status.Signal()))
 				}
 			}
 		} else {
-			logger.Debug(fmt.Sprintf("[Watchdog] Process exited with error: %v", err))
+			logger.Debug(fmt.Sprintf("[Watchdog] Process %s exited with error: %v", p.Name, err))
 		}
 	} else {
-		logger.Debug("[Watchdog] Process completed successfully")
+		logger.Debug(fmt.Sprintf("[Watchdog] Process %s completed successfully", p.Name))
 	}
 }
 
