@@ -8,4 +8,4 @@ COPY --from=builder /app/pm /pm
 COPY --from=builder /app/aefuf /aefuf
 COPY --from=builder /app/aefad /aefad
 COPY --from=builder /app/config.json /config.json
-CMD ["/pm"]
+ENTRYPOINT [ "./pm" ]
