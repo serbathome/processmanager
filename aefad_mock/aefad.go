@@ -33,5 +33,6 @@ func main() {
 
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
+	fmt.Printf("New connection to aefad from %s\n", conn.RemoteAddr().String())
 	time.Sleep(10 * time.Second) // Wait for 10 seconds
 }

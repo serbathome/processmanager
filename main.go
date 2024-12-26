@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -139,10 +141,37 @@ func (process *Process) startProcess() {
 	logger.Debug(fmt.Sprintf("Starting %s with command %s and args %v", process.Name, process.Command, process.Args))
 	time.Sleep(time.Duration(process.PauseMs) * time.Millisecond)
 	process.CmdObject = exec.Command(process.Command, process.Args...)
+
+	stdoutPipe, err := process.CmdObject.StdoutPipe()
+	if err != nil {
+		logger.Debug(fmt.Sprintf("Failed to get stdout pipe for %s: %v", process.Name, err))
+		return
+	}
+
+	stderrPipe, err := process.CmdObject.StderrPipe()
+	if err != nil {
+		logger.Debug(fmt.Sprintf("Failed to get stderr pipe for %s: %v", process.Name, err))
+		return
+	}
+
 	if err := process.CmdObject.Start(); err != nil {
 		logger.Debug(fmt.Sprintf("Failed to start %s: %v", process.Name, err))
-	} else {
-		logger.Debug(fmt.Sprintf("%s started with pid %d", process.Name, process.CmdObject.Process.Pid))
+		return
+	}
+
+	go process.captureOutput(stdoutPipe)
+	go process.captureOutput(stderrPipe)
+
+	logger.Debug(fmt.Sprintf("%s started with pid %d", process.Name, process.CmdObject.Process.Pid))
+}
+
+func (process *Process) captureOutput(pipe io.ReadCloser) {
+	scanner := bufio.NewScanner(pipe)
+	for scanner.Scan() {
+		logger.Debug(fmt.Sprintf("[%s] %s", process.Name, scanner.Text()))
+	}
+	if err := scanner.Err(); err != nil {
+		logger.Debug(fmt.Sprintf("Error reading from pipe for %s: %v", process.Name, err))
 	}
 }
 
