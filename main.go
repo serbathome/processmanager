@@ -26,6 +26,7 @@ func (logger *Logger) SetLevel(level string) {
 
 func init() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	config.HealthCheckIntervalSeconds = 60
 }
 
 func (logger *Logger) Debug(message string) {
@@ -54,8 +55,9 @@ type Process struct {
 }
 
 type Config struct {
-	Processes []Process
-	LogLevel  string
+	Processes                  []Process
+	LogLevel                   string
+	HealthCheckIntervalSeconds int
 }
 
 var (
@@ -69,29 +71,31 @@ func (config *Config) loadConfig() {
 	file, err := os.Open("config.json")
 	if err != nil {
 		logger.Debug("Error opening config file: " + err.Error())
-		return
+		panic(err)
 	}
 	defer file.Close()
 	decoder := json.NewDecoder(file)
 	err = decoder.Decode(&config)
 	if err != nil {
 		logger.Debug("Error decoding config file: " + err.Error())
-		return
+		panic(err)
 	}
 	logger.SetLevel(config.LogLevel)
 	logger.Debug("Config loaded successfully")
 }
 
 func (config *Config) dumpConfig() {
-	logger.Debug("Current config:")
+	logger.Debug("--- Configuration ---")
 	for _, process := range config.Processes {
-		logger.Debug("Name: " + process.Name)
-		logger.Debug("Command: " + process.Command)
-		logger.Debug("Args: " + fmt.Sprintf("%v", process.Args))
-		logger.Debug("PauseMs: " + fmt.Sprintf("%d", process.PauseMs))
-		logger.Debug("Port: " + fmt.Sprintf("%d", process.Port))
+		logger.Debug("Process Name: " + process.Name)
+		logger.Debug("  Command: " + process.Command)
+		logger.Debug("  Args: " + fmt.Sprintf("%v", process.Args))
+		logger.Debug("  PauseMs: " + fmt.Sprintf("%d", process.PauseMs))
+		logger.Debug("  Port: " + fmt.Sprintf("%d", process.Port))
 	}
 	logger.Debug("Log level: " + config.LogLevel)
+	logger.Debug("HealthCheckIntervalSeconds: " + fmt.Sprintf("%d", config.HealthCheckIntervalSeconds))
+	logger.Debug("--- End of Configuration ---")
 }
 
 func (p *Process) Wait() {
@@ -166,7 +170,7 @@ func healthCheck() bool {
 
 func healthCheckLoop() {
 	for {
-		time.Sleep(60 * time.Second)
+		time.Sleep(time.Duration(config.HealthCheckIntervalSeconds) * time.Second)
 		if healthCheck() {
 			logger.Info("Network connection to all processes is healthy")
 		} else {
