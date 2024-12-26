@@ -15,5 +15,6 @@
             "port": 3888
         }
     ],
-    "logLevel": "DEBUG"
+    "logLevel": "DEBUG",
+    "healthCheckIntervalSeconds": 10
 }
